@@ -27,12 +27,15 @@ int main() {
   char *recvbuf;
   size_t numbytes = 1e9;
 
-  // initialize communicator with a chosen implementation library
-  Comm test<char>(IPC);
+  // initialize CommBench
+  init();
 
   // allocate device memory
   allocate(sendbuf, numbytes);
   allocate(recvbuf, numbytes);
+
+  // initialize communicator with a chosen implementation library
+  Comm<char> test(IPC);
 
   // compose microbenchmarking pattern by registering buffers
   test.add(sendbuf, recvbuf, numbytes, 0, 1);
@@ -40,10 +43,12 @@ int main() {
   // take measurement with 5 warmup and 10 measurement iterations
   test.measure(5, 10);
 
+  // deallocate device memory
   free(sendbuf);
   free(recvbuf);
 
-  return 0;
+  // finalize CommBench
+  finalize();
 }
 ```
 
