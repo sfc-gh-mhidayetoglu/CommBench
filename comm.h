@@ -100,7 +100,7 @@
 
     void add(T *sendbuf, size_t sendoffset, T *recvbuf, size_t recvoffset, size_t count, int sendid, int recvid);
     void add(T *sendbuf, T *recvbuf, size_t count, int sendid, int recvid);
-    void add_lazy(size_t count, int sendid, int recvid);
+    void add(size_t count, int sendid, int recvid);
     void pyadd(pyalloc<T> sendbuf, size_t sendoffset, pyalloc<T> recvbuf, size_t recvoffset, size_t count, int sendid, int recvid);
     void start();
     void wait();
@@ -110,8 +110,8 @@
     std::vector<size_t> getMatrix();
     void report();
 
-    void allocate(T *&buffer, size_t n);
-    void allocate(T *&buffer, size_t n, int i);
+    // void allocate(T *&buffer, size_t n);
+    // void allocate(T *&buffer, size_t n, int i);
   };
 
   template <typename T>
@@ -315,11 +315,13 @@
   }*/
 
   template <typename T>
-  void Comm<T>::add_lazy(size_t count, int sendid, int recvid) {
+  void Comm<T>::add(size_t count, int sendid, int recvid) {
     T *sendbuf;
     T *recvbuf;
-    allocate(sendbuf, count, sendid);
-    allocate(recvbuf, count, recvid);
+    if (myid == sendid)
+      allocate(sendbuf, count);
+    if (myid == recvid)
+      allocate(recvbuf, count);
     add(sendbuf, 0, recvbuf, 0, count, sendid, recvid);
   }
   template <typename T>
@@ -851,8 +853,6 @@
 
   template <typename T>
   void Comm<T>::start() {
-    init();
-    finalize();
     switch(lib) {
 #ifdef USE_MPI
       case MPI:

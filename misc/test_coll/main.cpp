@@ -24,15 +24,15 @@
 #define ROOT 0
 
 // HEADERS
-// #include <nccl.h>
+#include <nccl.h>
 // #include <rccl.h>
- #include <sycl.hpp>
- #include <ze_api.h>
+// #include <sycl.hpp>
+// #include <ze_api.h>
 
 // PORTS
-// #define PORT_CUDA
-//  #define PORT_HIP
- #define PORT_SYCL
+#define PORT_CUDA
+// #define PORT_HIP
+// #define PORT_SYCL
 
 // PERSISTENT MPI
 // #define CAP_MPI_PERSISTENT
@@ -69,14 +69,21 @@ int main(int argc, char *argv[])
   //MPI_Get_processor_name(machine_name, &name_len);
   //printf("myid %d %s\n",myid, machine_name);
 
-  if(argc != 6) {print_args(); MPI_Finalize(); return 0;}
+  if(argc != 8) {print_args(); MPI_Finalize(); return 0;}
   // INPUT PARAMETERS
   int library = atoi(argv[1]);
   int pattern = atoi(argv[2]);
   size_t count = atol(argv[3]);
   int warmup = atoi(argv[4]);
   int numiter = atoi(argv[5]);
+  int window = atoi(argv[6]);
+  char *filename = argv[7];
 
+  freopen(filename, "r", stdin);
+  int num;
+  std::vector<int> size;
+  while(scanf("%d", &num) == 1)
+    size.push_back(num);
 
   // PRINT NUMBER OF PROCESSES AND THREADS
   if(myid == ROOT)
@@ -86,6 +93,9 @@ int main(int argc, char *argv[])
     printf("Number of threads per proc: %d\n", numthread);
     printf("Number of warmup %d\n", warmup);
     printf("Number of iterations %d\n", numiter);
+    printf("Number of calls per iter %d\n", window);
+    printf("filename %s\n", filename);
+    printf("size %ld\n", size.size());
 
     printf("Library: ");
     switch(library) {
@@ -192,163 +202,168 @@ int main(int argc, char *argv[])
   int recvcounts[numproc];
   for(int p = 0; p < numproc; p++)
     recvcounts[p] = count;
+  std::vector<size_t> recv_counts(numproc, count);
 
-  double times[numiter];
-  if(myid == ROOT)
-    printf("%d warmup iterations (in order):\n", warmup);
-  for (int iter = -warmup; iter < numiter; iter++) {
-    //INITIALIZE
+  for (auto &size : size) {
+    count = size / sizeof(float) / numproc;
+    double times[numiter];
+    if(myid == ROOT)
+      printf("%d warmup iterations (in order):\n", warmup);
+    for (int iter = -warmup; iter < numiter; iter++) {
+      //INITIALIZE
 #ifdef PORT_CUDA
-    cudaMemset(sendbuf_d, -1, count * numproc * sizeof(float));
-    cudaMemset(recvbuf_d, -1, count * numproc * sizeof(float));
-    cudaDeviceSynchronize();
+      cudaMemset(sendbuf_d, -1, count * numproc * sizeof(float));
+      cudaMemset(recvbuf_d, -1, count * numproc * sizeof(float));
+      cudaDeviceSynchronize();
 #elif defined PORT_HIP
-    hipMemset(sendbuf_d, -1, count * numproc * sizeof(float));
-    hipMemset(recvbuf_d, -1, count * numproc * sizeof(float));
-    hipDeviceSynchronize();
+      hipMemset(sendbuf_d, -1, count * numproc * sizeof(float));
+      hipMemset(recvbuf_d, -1, count * numproc * sizeof(float));
+      hipDeviceSynchronize();
 #elif defined PORT_SYCL
-    q.memset(sendbuf_d, -1, count * numproc * sizeof(float));
-    q.memset(recvbuf_d, -1, count * numproc * sizeof(float));
-    q.wait();
+      q.memset(sendbuf_d, -1, count * numproc * sizeof(float));
+      q.memset(recvbuf_d, -1, count * numproc * sizeof(float));
+      q.wait();
 #else
-    memset(sendbuf_d, -1, count * numproc * sizeof(float));
-    memset(recvbuf_d, -1, count * numproc * sizeof(float));
+      memset(sendbuf_d, -1, count * numproc * sizeof(float));
+      memset(recvbuf_d, -1, count * numproc * sizeof(float));
 #endif
-    std::vector<size_t> recv_counts(numproc, count);
-    // MEASURE
-    MPI_Barrier(MPI_COMM_WORLD);
-    double time = MPI_Wtime();
-    switch(library) {
-      case test::MPI :
-        switch(pattern) {
-          case gather        : MPI_Gather(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, ROOT, MPI_COMM_WORLD);  break;
-          case scatter       : MPI_Scatter(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, ROOT, MPI_COMM_WORLD); break;
-          case broadcast     : MPI_Bcast(sendbuf_d, count * numproc, MPI_FLOAT, ROOT, MPI_COMM_WORLD);                      break;
-          case reduce        : MPI_Reduce(sendbuf_d, recvbuf_d, count * numproc, MPI_FLOAT, MPI_SUM, ROOT, MPI_COMM_WORLD); break;
-          case alltoall      : MPI_Alltoall(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, MPI_COMM_WORLD);      break;
-          case allgather     : MPI_Allgather(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, MPI_COMM_WORLD);     break;
-          case reducescatter : MPI_Reduce_scatter(sendbuf_d, recvbuf_d, recvcounts, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);    break;
-          case allreduce     : MPI_Allreduce(sendbuf_d, recvbuf_d, count * numproc, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);    break;
-          default            : return 0;
-        }
-        break;
-      case test::NCCL :
+      // MEASURE
+      MPI_Barrier(MPI_COMM_WORLD);
+      double time = MPI_Wtime();
+      for(int i = 0; i < window; i++) {
+        switch(library) {
+          case test::MPI :
+            switch(pattern) {
+              case gather        : MPI_Gather(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, ROOT, MPI_COMM_WORLD);  break;
+              case scatter       : MPI_Scatter(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, ROOT, MPI_COMM_WORLD); break;
+              case broadcast     : MPI_Bcast(sendbuf_d, count * numproc, MPI_FLOAT, ROOT, MPI_COMM_WORLD);                      break;
+              case reduce        : MPI_Reduce(sendbuf_d, recvbuf_d, count * numproc, MPI_FLOAT, MPI_SUM, ROOT, MPI_COMM_WORLD); break;
+              case alltoall      : MPI_Alltoall(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, MPI_COMM_WORLD);      break;
+              case allgather     : MPI_Allgather(sendbuf_d, count, MPI_FLOAT, recvbuf_d, count, MPI_FLOAT, MPI_COMM_WORLD);     break;
+              case reducescatter : MPI_Reduce_scatter(sendbuf_d, recvbuf_d, recvcounts, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);    break;
+              case allreduce     : MPI_Allreduce(sendbuf_d, recvbuf_d, count * numproc, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);    break;
+              default            : return 0;
+            }
+            break;
+          case test::NCCL :
 #ifdef CAP_NCCL
-        switch(pattern) {
-          case broadcast     : ncclBcast(sendbuf_d, count * numproc, ncclFloat32, ROOT, comm_nccl, 0);                      break;
-          case reduce        : ncclReduce(sendbuf_d, recvbuf_d, count * numproc, ncclFloat32, ncclSum, ROOT, comm_nccl, 0); break;
-          case allgather     : ncclAllGather(sendbuf_d, recvbuf_d, count, ncclFloat32, comm_nccl, 0);                       break;
-          case reducescatter : ncclReduceScatter(sendbuf_d, recvbuf_d, count, ncclFloat32, ncclSum, comm_nccl, 0);          break;
-          case allreduce     : ncclAllReduce(sendbuf_d, recvbuf_d, count * numproc, ncclFloat32, ncclSum, comm_nccl, 0);    break;
-          default            : return 0;
-        }
+            switch(pattern) {
+              case broadcast     : ncclBcast(sendbuf_d, count * numproc, ncclFloat32, ROOT, comm_nccl, 0);                      break;
+              case reduce        : ncclReduce(sendbuf_d, recvbuf_d, count * numproc, ncclFloat32, ncclSum, ROOT, comm_nccl, 0); break;
+              case allgather     : ncclAllGather(sendbuf_d, recvbuf_d, count, ncclFloat32, comm_nccl, 0);                       break;
+              case reducescatter : ncclReduceScatter(sendbuf_d, recvbuf_d, count, ncclFloat32, ncclSum, comm_nccl, 0);          break;
+              case allreduce     : ncclAllReduce(sendbuf_d, recvbuf_d, count * numproc, ncclFloat32, ncclSum, comm_nccl, 0);    break;
+              default            : return 0;
+            }
   #ifdef PORT_CUDA
-        cudaStreamSynchronize(0);
+            cudaStreamSynchronize(0);
   #elif defined PORT_HIP
-        hipStreamSynchronize(0);
+            hipStreamSynchronize(0);
   #endif
 #elif defined CAP_ONECCL
-        switch(pattern) {
-          case broadcast     : ccl::broadcast(sendbuf_d, count * numproc, ROOT, *comm_ccl, *stream_ccl);                              break;
-	  case reduce        : ccl::reduce(sendbuf_d, recvbuf_d, count * numproc, ccl::reduction::sum, ROOT, *comm_ccl, *stream_ccl); break;
-	  case allgather     : ccl::allgatherv(sendbuf_d, count, recvbuf_d, recv_counts, *comm_ccl, *stream_ccl);                     break;
-	  case reducescatter : ccl::reduce_scatter(sendbuf_d, recvbuf_d, count, ccl::reduction::sum, *comm_ccl, *stream_ccl);         break;
-	  case allreduce     : ccl::allreduce(sendbuf_d, recvbuf_d, count * numproc, ccl::reduction::sum, *comm_ccl, *stream_ccl);    break;
-	  case alltoall      : ccl::alltoall(sendbuf_d, recvbuf_d, count, *comm_ccl, *stream_ccl);                                    break;
-          default            : return 0;
-        }
-        q.wait();
+            switch(pattern) {
+              case broadcast     : ccl::broadcast(sendbuf_d, count * numproc, ROOT, *comm_ccl, *stream_ccl);                              break;
+              case reduce        : ccl::reduce(sendbuf_d, recvbuf_d, count * numproc, ccl::reduction::sum, ROOT, *comm_ccl, *stream_ccl); break;
+              case allgather     : ccl::allgatherv(sendbuf_d, count, recvbuf_d, recv_counts, *comm_ccl, *stream_ccl);                     break;
+              case reducescatter : ccl::reduce_scatter(sendbuf_d, recvbuf_d, count, ccl::reduction::sum, *comm_ccl, *stream_ccl);         break;
+              case allreduce     : ccl::allreduce(sendbuf_d, recvbuf_d, count * numproc, ccl::reduction::sum, *comm_ccl, *stream_ccl);    break;
+              case alltoall      : ccl::alltoall(sendbuf_d, recvbuf_d, count, *comm_ccl, *stream_ccl);                                    break;
+              default            : return 0;
+            }
+            q.wait();
 #endif
-        break;
-      default:
-        return 0;
-    }
-    // MPI_Barrier(MPI_COMM_WORLD); // eliminate barrier
-    time = MPI_Wtime() - time;
-    // TAKE MAXIMUM ELAPSED TIME ON ALL PROCESSES
-    MPI_Allreduce(MPI_IN_PLACE, &time, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    if(iter < 0) {
-      if(myid == ROOT)
-        printf("warmup: %e\n", time);
-    }
-    else
-      times[iter] = time;
-  }
-
-  std::sort(times, times + numiter,  [](const double & a, const double & b) -> bool {return a < b;});
-
-  if(myid == ROOT) {
-    printf("%d measurement iterations (sorted):\n", numiter);
-    for(int iter = 0; iter < numiter; iter++) {
-      printf("time: %.4e", times[iter]);
-      if(iter == 0)
-        printf(" -> min\n");
-      else if(iter == numiter / 2)
-        printf(" -> median\n");
-      else if(iter == numiter - 1)
-        printf(" -> max\n");
+            break;
+          default:
+            return 0;
+        }
+      }
+      // MPI_Barrier(MPI_COMM_WORLD); // eliminate barrier
+      time = (MPI_Wtime() - time) / window;
+      // TAKE MAXIMUM ELAPSED TIME ON ALL PROCESSES
+      MPI_Allreduce(MPI_IN_PLACE, &time, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+      if(iter < 0) {
+        if(myid == ROOT)
+          printf("warmup: %e\n", time);
+      }
       else
-        printf("\n");
+        times[iter] = time;
     }
-    printf("\n");
-    double minTime = times[0];
-    double medTime = times[numiter / 2];
-    double maxTime = times[numiter - 1];
-    double avgTime = 0;
-    for(int iter = 0; iter < numiter; iter++)
-      avgTime += times[iter];
-    avgTime /= numiter;
-    size_t data = count * sizeof(float) * numproc;
-    switch(library) {
-      case test::MPI :
-        switch(pattern) {
-          case gather        : printf("MPI_Gather\n"); break;
-          case scatter       : printf("MPI_Scatter\n"); break;
-          case broadcast     : printf("MPI_Bcast\n"); break;
-          case reduce        : printf("MPI_Reduce\n"); break;
-          case alltoall      : printf("MPI_Alltoall\n"); break;
-          case allgather     : printf("MPI_Allgather\n"); break;
-          case reducescatter : printf("MPI_Reduce_scatter\n"); break;
-          case allreduce     : printf("MPI_Allreduce\n"); break;
-        }
-        break;
-      case test::NCCL :
+
+    std::sort(times, times + numiter,  [](const double & a, const double & b) -> bool {return a < b;});
+
+    if(myid == ROOT) {
+      printf("%d measurement iterations (sorted):\n", numiter);
+      for(int iter = 0; iter < numiter; iter++) {
+        printf("time: %.4e", times[iter]);
+        if(iter == 0)
+          printf(" -> min\n");
+        else if(iter == numiter / 2)
+          printf(" -> median\n");
+        else if(iter == numiter - 1)
+          printf(" -> max\n");
+        else
+          printf("\n");
+      }
+      printf("\n");
+      double minTime = times[0];
+      double medTime = times[numiter / 2];
+      double maxTime = times[numiter - 1];
+      double avgTime = 0;
+      for(int iter = 0; iter < numiter; iter++)
+        avgTime += times[iter];
+      avgTime /= numiter;
+      size_t data = count * sizeof(float) * numproc;
+      switch(library) {
+        case test::MPI :
+          switch(pattern) {
+            case gather        : printf("MPI_Gather\n"); break;
+            case scatter       : printf("MPI_Scatter\n"); break;
+            case broadcast     : printf("MPI_Bcast\n"); break;
+            case reduce        : printf("MPI_Reduce\n"); break;
+            case alltoall      : printf("MPI_Alltoall\n"); break;
+            case allgather     : printf("MPI_Allgather\n"); break;
+            case reducescatter : printf("MPI_Reduce_scatter\n"); break;
+            case allreduce     : printf("MPI_Allreduce\n"); break;
+          }
+          break;
+        case test::NCCL :
 #ifdef CAP_NCCL
-        switch(pattern) {
-          case broadcast     : printf("ncclBcast\n"); break;
-          case reduce        : printf("ncclReduce\n"); break;
-          case allgather     : printf("ncclAllGather\n"); break;
-          case reducescatter : printf("ncclReduceScatter\n"); break;
-          case allreduce     : printf("ncclAllReduce\n"); break;
-        }
+          switch(pattern) {
+            case broadcast     : printf("ncclBcast\n"); break;
+            case reduce        : printf("ncclReduce\n"); break;
+            case allgather     : printf("ncclAllGather\n"); break;
+            case reducescatter : printf("ncclReduceScatter\n"); break;
+            case allreduce     : printf("ncclAllReduce\n"); break;
+          }
 #elif defined CAP_ONECCL
-        switch(pattern) {
-          case broadcast     : printf("ccl::Broadcast\n"); break;
-	  case reduce        : printf("ccl::Reduce\n"); break;
-	  case allgather     : printf("ccl::AllGatherv\n"); break;
-	  case reducescatter : printf("ccl::ReduceScatter\n"); break;
-	  case allreduce     : printf("ccl::AllReduce\n"); break;
-	  case alltoall      : printf("ccl::Altoall\n"); break;
-        }
+          switch(pattern) {
+            case broadcast     : printf("ccl::Broadcast\n"); break;
+            case reduce        : printf("ccl::Reduce\n"); break;
+            case allgather     : printf("ccl::AllGatherv\n"); break;
+            case reducescatter : printf("ccl::ReduceScatter\n"); break;
+            case allreduce     : printf("ccl::AllReduce\n"); break;
+            case alltoall      : printf("ccl::Altoall\n"); break;
+          }
 #endif
-      break;
+        break;
+      }
+      if (data < 1e3)
+        printf("%d bytes", (int)data);
+      else if (data < 1e6)
+        printf("%.4f KB", data / 1e3);
+      else if (data < 1e9)
+        printf("%.4f MB", data / 1e6);
+      else if (data < 1e12)
+        printf("%.4f GB", data / 1e9);
+      else
+        printf("%.4f TB", data / 1e12);
+      printf("\n");
+      printf("minTime: %.4e us, %.4e s/GB, %.4e GB/s\n", minTime * 1e6, minTime / data * 1e9, data / minTime / 1e9);
+      printf("medTime: %.4e us, %.4e s/GB, %.4e GB/s\n", medTime * 1e6, medTime / data * 1e9, data / medTime / 1e9);
+      printf("maxTime: %.4e us, %.4e s/GB, %.4e GB/s\n", maxTime * 1e6, maxTime / data * 1e9, data / maxTime / 1e9);
+      printf("avgTime: %.4e us, %.4e s/GB, %.4e GB/s\n", avgTime * 1e6, avgTime / data * 1e9, data / avgTime / 1e9);
+      printf("\n");
     }
-    if (data < 1e3)
-      printf("%d bytes", (int)data);
-    else if (data < 1e6)
-      printf("%.4f KB", data / 1e3);
-    else if (data < 1e9)
-      printf("%.4f MB", data / 1e6);
-    else if (data < 1e12)
-      printf("%.4f GB", data / 1e9);
-    else
-      printf("%.4f TB", data / 1e12);
-    printf("\n");
-    printf("minTime: %.4e us, %.4e s/GB, %.4e GB/s\n", minTime * 1e6, minTime / data * 1e9, data / minTime / 1e9);
-    printf("medTime: %.4e us, %.4e s/GB, %.4e GB/s\n", medTime * 1e6, medTime / data * 1e9, data / medTime / 1e9);
-    printf("maxTime: %.4e us, %.4e s/GB, %.4e GB/s\n", maxTime * 1e6, maxTime / data * 1e9, data / maxTime / 1e9);
-    printf("avgTime: %.4e us, %.4e s/GB, %.4e GB/s\n", avgTime * 1e6, avgTime / data * 1e9, data / avgTime / 1e9);
-    printf("\n");
   }
 
 #ifdef PORT_CUDA

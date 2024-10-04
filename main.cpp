@@ -3,23 +3,27 @@
 
 using namespace CommBench;
 
-int main() {
+#define Type float
 
-  char *sendbuf;
-  char *recvbuf;
-  size_t numbytes = 1e9;
+int main(int argc, char *argv[]) {
 
   init();
-  allocate(sendbuf, numbytes);
-  allocate(recvbuf, numbytes);
 
-  Comm<char> test(MPI);
-  test.add(sendbuf, recvbuf, numbytes, 0, 8);
+  // buffer size
+  size_t count = 1e9; // 4 GB
 
-  test.measure(5, 10);
+  // communicator
+  Comm<Type> test(NCCL);
+  // pattern
+  for (int node = 1; node < 2; node++)
+    for (int i = 0; i < 8; i++)
+      test.add(count, i, node * 8 + i);
 
-  free(sendbuf);
-  free(recvbuf);
+  // report total memory
+  report_memory();
 
-  return 0;
+  // measure bandwidth and latency
+  test.measure(5, 20);
+
+  finalize();
 }

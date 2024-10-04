@@ -14,17 +14,17 @@
  */
 
 // GPU PORTS
-// #define PORT_CUDA
+#define PORT_CUDA
 // #define PORT_HIP
 // #define PORT_SYCL
 
 // COMMBENCH
-#include "comm.h"
+#include "commbench.h"
 
 #define ROOT 0
 
 // UTILITIES
-void print_args(int, char**, int&, int&, int&, size_t&, int&, int&, int&, int&, int&);
+void print_args(int, char**, int&, int&, int&, size_t&, int&, int&, int&, int&, int&, int &);
 
 // USER DEFINED TYPE
 struct Type
@@ -40,6 +40,7 @@ enum Direction {outbound, inbound, bidirect, omnidirect, numdirect};
 
 int main(int argc, char *argv[])
 {
+
   // INPUT PARAMETERS
   int library;
   int pattern;
@@ -47,13 +48,15 @@ int main(int argc, char *argv[])
   size_t count;
   int warmup;
   int numiter;
+  int window;
   int numgroup;
   int groupsize;
   int subgroupsize;
-  print_args(argc, argv, library, pattern, direction, count, warmup, numiter, numgroup, groupsize, subgroupsize);
+  print_args(argc, argv, library, pattern, direction, count, warmup, numiter, window, numgroup, groupsize, subgroupsize);
 
   int numgpu = numgroup * groupsize;
 
+  CommBench::init();
   CommBench::Comm<Type> bench((CommBench::library) library);
 
   size_t data;
@@ -63,14 +66,14 @@ int main(int argc, char *argv[])
         case Direction::outbound:
         case Direction::inbound:
           for(int i = 0; i < numgpu; i++)
-            bench.add_lazy(count, i, i);
+            bench.add(count, i, i);
           data = count;
           break;
 	case Direction::bidirect:
 	case Direction::omnidirect:
           for(int i = 0; i < numgpu; i++) {
-            bench.add_lazy(count, i, i);
-            bench.add_lazy(count, i, i);
+            bench.add(count, i, i);
+            bench.add(count, i, i);
           }
           data = 2 * count;
           break;
@@ -83,7 +86,7 @@ int main(int argc, char *argv[])
          for(int sender = 0; sender < subgroupsize; sender++)
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++) {
               int recver = recvgroup * groupsize + sender;
-              bench.add_lazy(count, sender, recver);
+              bench.add(count, sender, recver);
             }
           data = count * subgroupsize * (numgroup - 1);
           break;
@@ -91,7 +94,7 @@ int main(int argc, char *argv[])
           for(int recver = 0; recver < subgroupsize; recver++)
             for(int sendgroup = 1; sendgroup < numgroup; sendgroup++) {
               int sender = sendgroup * groupsize + recver;
-              bench.add_lazy(count, sender, recver);
+              bench.add(count, sender, recver);
             }
           data = count * subgroupsize * (numgroup - 1);
           break;
@@ -99,8 +102,8 @@ int main(int argc, char *argv[])
           for(int sender = 0; sender < subgroupsize; sender++)
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++) {
               int recver = recvgroup * groupsize + sender;
-              bench.add_lazy(count, sender, recver);
-              bench.add_lazy(count, recver, sender);
+              bench.add(count, sender, recver);
+              bench.add(count, recver, sender);
             }
           data = 2 * count * subgroupsize * (numgroup - 1);
           break;
@@ -111,7 +114,7 @@ int main(int argc, char *argv[])
                 for(int send = 0; send < subgroupsize; send++) {
                   int sender = sendgroup * groupsize + send;
                   int recver = recvgroup * groupsize + send;
-                  bench.add_lazy(count, sender, recver);
+                  bench.add(count, sender, recver);
                 }
           data = 2 * count * subgroupsize * (numgroup - 1);
           break;
@@ -125,7 +128,7 @@ int main(int argc, char *argv[])
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++)
               for(int recv = 0; recv < groupsize; recv++) {
                 int recver = recvgroup * groupsize + recv;
-                bench.add_lazy(count, sender, recver);
+                bench.add(count, sender, recver);
               }
           data = count * subgroupsize * (numgroup - 1) * groupsize;
           break;
@@ -134,7 +137,7 @@ int main(int argc, char *argv[])
             for(int sendgroup = 1; sendgroup < numgroup; sendgroup++)
               for(int send = 0; send < groupsize; send++) {
                 int sender = sendgroup * groupsize + send;
-                bench.add_lazy(count, sender, recver);
+                bench.add(count, sender, recver);
               }
           data = count * subgroupsize * (numgroup - 1) * groupsize;
           break;
@@ -143,8 +146,8 @@ int main(int argc, char *argv[])
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++)
               for(int recv = 0; recv < groupsize; recv++) {
                 int recver = recvgroup * groupsize + recv;
-                bench.add_lazy(count, sender, recver);
-                bench.add_lazy(count, recver, sender);
+                bench.add(count, sender, recver);
+                bench.add(count, recver, sender);
               }
           data = 2 * count * subgroupsize * (numgroup - 1) * groupsize;
           break;
@@ -158,7 +161,7 @@ int main(int argc, char *argv[])
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++)
               for(int recv = 0; recv < subgroupsize; recv++) {
                 int recver = recvgroup * groupsize + recv;
-                bench.add_lazy(count, sender, recver);
+                bench.add(count, sender, recver);
               }
           data = count * subgroupsize * (numgroup - 1) * subgroupsize;
           break;
@@ -167,7 +170,7 @@ int main(int argc, char *argv[])
             for(int sendgroup = 1; sendgroup < numgroup; sendgroup++)
               for(int send = 0; send < subgroupsize; send++) {
                 int sender = sendgroup * groupsize + send;
-                bench.add_lazy(count, sender, recver);
+                bench.add(count, sender, recver);
               }
           data = count * subgroupsize * (numgroup - 1) * subgroupsize;
           break;
@@ -176,8 +179,8 @@ int main(int argc, char *argv[])
             for(int recvgroup = 1; recvgroup < numgroup; recvgroup++)
               for(int recv = 0; recv < subgroupsize; recv++) {
                 int recver = recvgroup * groupsize + recv;
-              bench.add_lazy(count, sender, recver);
-              bench.add_lazy(count, recver, sender);
+              bench.add(count, sender, recver);
+              bench.add(count, recver, sender);
             }
           data = 2 * count * subgroupsize * (numgroup - 1) * subgroupsize;
           break;
@@ -189,7 +192,7 @@ int main(int argc, char *argv[])
                   for(int recv = 0; recv < subgroupsize; recv++) {
                     int sender = sendgroup * groupsize + send;
                     int recver = recvgroup * groupsize + recv;
-                    bench.add_lazy(count, sender, recver);
+                    bench.add(count, sender, recver);
                   }
           data = 2 * count * subgroupsize * (numgroup - 1) * subgroupsize;
           break;
@@ -199,7 +202,11 @@ int main(int argc, char *argv[])
       break; // DO NOTHING
   }
 
+  CommBench::report_memory();
+
   bench.measure(warmup, numiter, data);
+
+  MPI_Finalize();
 
 } // main()
 
@@ -210,8 +217,9 @@ void print_args(int argc, char *argv[],
 		int &direction, 
 		size_t &count, 
 		int &warmup, 
-		int &numiter, 
-		int &numgroup, 
+		int &numiter,
+                int &window,
+		int &numgroup,
 		int &groupsize,
 		int &subgroupsize) {
   MPI_Init(&argc, &argv);
@@ -224,7 +232,7 @@ void print_args(int argc, char *argv[],
   if(omp_get_thread_num() == 0)
   numthread = omp_get_num_threads();
 
-  if(argc == 10) {
+  if(argc == 11) {
     // INPUT PARAMETERS
     library = atoi(argv[1]);
     pattern = atoi(argv[2]);
@@ -232,9 +240,10 @@ void print_args(int argc, char *argv[],
     count = atol(argv[4]);
     warmup = atoi(argv[5]);
     numiter = atoi(argv[6]);
-    numgroup = atoi(argv[7]);
-    groupsize = atoi(argv[8]);
-    subgroupsize = atoi(argv[9]);
+    window = atoi(argv[7]);
+    numgroup = atoi(argv[8]);
+    groupsize = atoi(argv[9]);
+    subgroupsize = atoi(argv[10]);
     // PRINT NUMBER OF PROCESSES AND THREADS
     if(myid == ROOT)
     {
@@ -243,6 +252,7 @@ void print_args(int argc, char *argv[],
       printf("Number of threads per proc: %d\n", numthread);
       printf("Number of warmup %d\n", warmup);
       printf("Number of iterations %d\n", numiter);
+      printf("Window size %d\n", window);
       printf("Number of Groups %d\n", numgroup);
       printf("Group Size: %d\n", groupsize);
       printf("Subgroup Size: %d\n", subgroupsize);
@@ -259,13 +269,13 @@ void print_args(int argc, char *argv[],
   else {
     if(myid == ROOT) {
       printf("\n");
-      printf("CommBench requires ten arguments:\n");
+      printf("CommBench requires eleven arguments:\n");
       printf("1. library:\n");
       for(int lib = 0; lib < CommBench::numlib; lib++)
         switch(lib) {
           case CommBench::dummy : printf("      %d for dummy\n", CommBench::dummy); break;
           case CommBench::MPI  : printf("      %d for MPI\n", CommBench::MPI); break;
-          case CommBench::XCCL : printf("      %d for NCCL/RCCL/OneCCL\n", CommBench::XCCL); break;
+          case CommBench::NCCL : printf("      %d for NCCL/RCCL/OneCCL\n", CommBench::NCCL); break;
           case CommBench::IPC  : printf("      %d for IPC\n", CommBench::IPC);
         }
       printf("2. pattern:\n");
@@ -287,11 +297,12 @@ void print_args(int argc, char *argv[],
       printf("4. count: number of elements per message\n");
       printf("5. warmup: number of warmup rounds\n");
       printf("6. numiter: number of measurement rounds\n");
-      printf("7. n: number of groups\n");
-      printf("8. g: group size\n");
-      printf("9. k: subgroup size\n");
+      printf("7. window: number of back-to-back calls\n");
+      printf("8. n: number of groups\n");
+      printf("9. g: group size\n");
+      printf("10. k: subgroup size\n");
       printf("where on can run CommBench as\n");
-      printf("mpirun ./CommBench library pattern direction count warmup numiter n g k\n");
+      printf("mpirun ./CommBench library pattern direction count warmup numiter window n g k\n");
       printf("\n");
     }
     abort();

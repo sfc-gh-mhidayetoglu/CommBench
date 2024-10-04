@@ -38,7 +38,8 @@
 #endif
 
 #if defined PORT_CUDA || defined PORT_HIP
-// #define CAP_NCCL
+#define CAP_NCCL
+#define CAP_NCCL_LOCAL
 #endif
 #ifdef PORT_ONEAPI
 // #define CAP_ZE
@@ -286,7 +287,7 @@ namespace CommBench
       MPI_Comm_size(comm_mpi, &numproc);
       if(myid == printid) {
         if(!init_mpi) {
-          printf("#################### MPI IS INITIALIZED, it is user's responsibility to finalize.\n");
+          printf("#################### MPI IS INITIALIZED\n");
           int provided;
           MPI_Query_thread(&provided);
           printf("provided thread support: %d\n", provided);
@@ -349,9 +350,18 @@ namespace CommBench
   }
 
   static void finalize() {
-   static bool finalize = false;
-   if(finalize) return;
-   finalize = true;
+    static bool finalize = false;
+    if(finalize) return;
+    finalize = true;
+#ifdef USE_MPI
+    int finalize_mpi;
+    MPI_Finalized(&finalize_mpi);
+    if (!finalize_mpi) {
+      MPI_Finalize();
+      if (myid == printid)
+        printf("#################### MPI IS FINALIZED\n");
+    }
+#endif
 #ifdef CAP_GASNET
    gex_EP_PublishBoundSegment(myteam, myep.data(), myep.size(), 0); // register EP's all-at-once
 #endif
