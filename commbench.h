@@ -39,11 +39,14 @@
 
 #if defined PORT_CUDA || defined PORT_HIP
 #define CAP_NCCL
-#define CAP_NCCL_LOCAL
 #endif
 #ifdef PORT_ONEAPI
 // #define CAP_ZE
 // #define CAP_ONECCL
+#endif
+
+#if defined CAP_NCCL
+#define CAP_NCCL_BUFFER
 #endif
 
 // DEPENDENCIES
@@ -149,6 +152,8 @@ namespace CommBench
   void barrier();
   template <typename T>
   void allocate(T *&buffer,size_t n);
+  template <typename T>
+  T* allocate(size_t n);
   template <typename T>
   void allocateHost(T *&buffer, size_t n);
   template <typename T>
@@ -614,6 +619,13 @@ namespace CommBench
 #endif
     memory += n * sizeof(T);
   };
+
+  template <typename T>
+  T* allocate(size_t n) {
+    T *buffer;
+    allocate(buffer, n);
+    return buffer;
+  }
 
   template <typename T>
   void allocateHost(T *&buffer, size_t n) {

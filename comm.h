@@ -110,8 +110,8 @@
     std::vector<size_t> getMatrix();
     void report();
 
-    // void allocate(T *&buffer, size_t n);
-    // void allocate(T *&buffer, size_t n, int i);
+    void allocate(T *&buffer, size_t n);
+    void free(T *&buffer);
   };
 
   template <typename T>
@@ -169,6 +169,8 @@
 #elif defined PORT_HIP
       hipStreamCreate(&stream_nccl);
 #endif
+      if (myid == printid)
+        printf("nccl comm: %p nccl stream: %p\n", comm_nccl, stream_nccl);
 #elif defined CAP_ONECCL
       static bool init_ccl_comm = false;
       if(!init_ccl_comm) {
@@ -271,6 +273,27 @@
 #endif
   }
 
+  template <typename T>
+  void Comm<T>::allocate(T *&buffer, size_t count) {
+#ifdef CAP_NCCL_BUFFER
+    ncclMemAlloc((void**)&buffer, count * sizeof(T));
+    void *handle;
+    ncclCommRegister(comm_nccl, buffer, count * sizeof(T), &handle);
+#else
+    CommBench::allocate(buffer, count);
+#endif
+  }
+  
+  template <typename T>
+  void Comm<T>::free(T *&buffer) {
+#ifdef CAP_NCCL_BUFFER
+    // ncclCommDeregister(comm, handle);
+    // ncclMemFree(buffer);
+#else
+    CommBench::free(buffer);
+#endif
+  }
+
   /*template <typename T>
   void Comm<T>::free() {
     for(T *ptr : buffer_list)
@@ -319,9 +342,9 @@
     T *sendbuf;
     T *recvbuf;
     if (myid == sendid)
-      allocate(sendbuf, count);
+      CommBench::allocate(sendbuf, count);
     if (myid == recvid)
-      allocate(recvbuf, count);
+      CommBench::allocate(recvbuf, count);
     add(sendbuf, 0, recvbuf, 0, count, sendid, recvid);
   }
   template <typename T>
