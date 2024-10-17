@@ -1,29 +1,44 @@
-#define PORT_HIP
+#define PORT_CUDA
 #include "commbench.h"
+
+#include <math.h> // for 2^i
 
 using namespace CommBench;
 
 #define Type float
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
 
+  // initialize CommBench
   init();
 
-  // buffer size
-  size_t count = 1e9; // 4 GB
+  // count = 2^i
+  int i_min = atoi(argv[1]);
+  int i_max = atoi(argv[2]);
+  int window = atoi(argv[3]);
+  size_t count_min = pow(2, i_min);
+  size_t count_max = pow(2, i_max);
+  if (myid == 0) {
+    printf("i_min = %d i_max = %d window = %d\n", i_min, i_max, window);
+    for (size_t count = count_min; count <= count_max; count = count * 2)
+      printf("count = %ld\n", count);
+  }
 
-  // communicator
-  Comm<Type> test(NCCL);
-  // pattern
-  for (int node = 1; node < 2; node++)
-    for (int i = 0; i < 8; i++)
-      test.add(count, i, node * 8 + i);
-
+  // allocate memory
+  Type *buffer = allocate<Type>(count_max);
   // report total memory
   report_memory();
+  // measurement loop
+  for (size_t count = count_min; count <= count_max; count = count * 2) {
+    // create new communicator
+    Comm<Type> test(NCCL);
+    for (int iter = 0; iter < window; iter++)
+      test.add(buffer, buffer, count, 0, 8);
+    // measure bandwidth and latency
+    test.measure(5, 20, count * window);
+  }
 
-  // measure bandwidth and latency
-  test.measure(5, 20);
-
+  // finalize CommBench
   finalize();
 }
